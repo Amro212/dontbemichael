@@ -47,6 +47,8 @@ export interface ScheduledMission {
   /** Who added it: `'owner'`, or the id of the agent whose request the owner
    *  approved in ASK ME. Absent on rows from before this existed (= owner). */
   createdBy?: string;
+  /** True when this job came from a starter suggestion, not typed in by hand. */
+  fromStarter?: boolean;
   /** A former "everyone" schedule: Michael gets it and hands the job out. */
   relay?: boolean;
   /** Who approved the request that set it: 'michael' or 'owner'. */

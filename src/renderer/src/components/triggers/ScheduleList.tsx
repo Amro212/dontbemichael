@@ -528,23 +528,25 @@ function useNameOf(): (id: string) => string {
   };
 }
 
-function useStarterSuggestions(agentId: string, to: string, mineCount: number): ScheduledMission[] {
+function useStarterSuggestions(agentId: string, to: string, mine: ScheduledMission[]): ScheduledMission[] {
   const agents = useStore((s) => s.agents);
   const missions = useStore((s) => s.missions);
   const godId = useGodId();
   const [suggestions, setSuggestions] = useState<ScheduledMission[]>([]);
 
   useEffect(() => {
-    if (mineCount > 0) {
+    // Hide suggestions once the owner adds a job of their own (not from a starter).
+    const hasNonStarterJob = mine.some((m) => !m.fromStarter);
+    if (hasNonStarterJob) {
       setSuggestions([]);
       return;
     }
     let alive = true;
-    window.cth.packsList().then(({ packs, core }) => {
+    Promise.all([window.cth.packsList(), window.cth.getConfig()]).then(([{ packs, core }, config]) => {
       if (!alive) return;
       const agent = agents.find((a) => a.id === agentId);
       const allPacks = [...packs.map((p) => p.pack), core].filter(Boolean);
-      let targetPack = allPacks[0];
+      let targetPack = core ?? allPacks[0];
       let defId = agentId;
 
       if (agent?.sourceCard) {
@@ -557,8 +559,10 @@ function useStarterSuggestions(agentId: string, to: string, mineCount: number): 
           }
         }
       } else {
-        const match = allPacks.find((p) => p?.starterMissions?.some((m) => m.agentId === agentId));
-        if (match) targetPack = match;
+        // Original team member with no sourceCard: pick pack by office's businessType, fall back to core.
+        const officeType = config.businessType;
+        const match = officeType ? allPacks.find((p) => p?.businessType === officeType) : null;
+        targetPack = match ?? core ?? allPacks[0];
       }
 
       if (!targetPack?.starterMissions?.length || !targetPack.officeHours) {
@@ -582,7 +586,7 @@ function useStarterSuggestions(agentId: string, to: string, mineCount: number): 
     });
 
     return () => { alive = false; };
-  }, [agentId, to, mineCount, agents, missions, godId]);
+  }, [agentId, to, mine, agents, missions, godId]);
 
   return suggestions;
 }
@@ -661,7 +665,7 @@ export function AgentSchedules({ agentId, agentName }: { agentId: string; agentN
   const agent = agents.find((a) => a.id === agentId);
   const focusOwner: FocusOwner = { agentId, name: agentName, workStyle: agent ? effectiveWorkStyle(agent) : '', jobs: mine };
 
-  const suggestions = useStarterSuggestions(agentId, to, mine.length);
+  const suggestions = useStarterSuggestions(agentId, to, mine);
   const { busy, run } = useSaveOp();
 
   const handleAddSuggestion = (m: ScheduledMission) => {
@@ -690,13 +694,11 @@ export function AgentSchedules({ agentId, agentName }: { agentId: string; agentN
         ))}
       </div>
       <AddSchedule to={to} ownerName={agentName} focusOwner={focusOwner} />
-      {mine.length === 0 && (
-        <SuggestedJobs
-          suggestions={suggestions}
-          onAdd={handleAddSuggestion}
-          busy={busy}
-        />
-      )}
+      <SuggestedJobs
+        suggestions={suggestions}
+        onAdd={handleAddSuggestion}
+        busy={busy}
+      />
     </div>
   );
 }

@@ -59,7 +59,8 @@ export function starterMissionsFor(
       body: '',
       focus,
       enabled: true,
-      createdBy: OWNER
+      createdBy: OWNER,
+      fromStarter: true
     });
     have.add(job.title.trim().toLowerCase());
   }
@@ -100,7 +101,8 @@ export function suggestedStarterMissions(
       body: '',
       focus,
       enabled: false,
-      createdBy: OWNER
+      createdBy: OWNER,
+      fromStarter: true
     });
     have.add(job.title.trim().toLowerCase());
   }
