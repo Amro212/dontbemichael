@@ -16,6 +16,55 @@ import { cleanFocus, parseWhen, missionsFor, OWNER, type ScheduledMission } from
 export interface StarterHours { days: string[]; work: { start: string; end: string } }
 export interface StarterJob { agentId: string; title: string; schedule: string; focus: string }
 
+/** Minimal pack shape for starter selection (avoids importing OfficePack). */
+export interface StarterPack {
+  businessType: string;
+  officeHours: StarterHours;
+  starterMissions?: StarterJob[];
+}
+
+/**
+ * Pick the pack to draw starter suggestions from.
+ *
+ * - When the agent has a sourceCard (`<businessType>/<cardId>`), use that card's
+ *   pack and definition id.
+ * - Otherwise (original team member), pick by the office's `businessType`, falling
+ *   back to `core`.
+ *
+ * Returns the pack and the definition id to look up starters for.
+ */
+export function pickStarterPack(
+  sourceCard: string | undefined,
+  businessType: string | undefined,
+  packs: (StarterPack | undefined)[],
+  core: StarterPack | undefined,
+  agentId: string
+): { pack: StarterPack | undefined; defId: string } {
+  const allPacks = packs.filter((p): p is StarterPack => !!p);
+  let defId = agentId;
+
+  if (sourceCard) {
+    const [type, id] = sourceCard.split('/');
+    if (type && id) {
+      const match = allPacks.find((p) => p.businessType === type);
+      if (match) return { pack: match, defId: id };
+    }
+  }
+  // Original team member with no sourceCard: pick by office's businessType, fall back to core.
+  const match = businessType ? allPacks.find((p) => p.businessType === businessType) : null;
+  return { pack: match ?? core ?? allPacks[0], defId };
+}
+
+/**
+ * Whether to show starter suggestions for an agent.
+ *
+ * Show starters while every job the member has came from a starter; hide them
+ * once the owner adds a job of their own.
+ */
+export function shouldShowStarters(mine: Pick<ScheduledMission, 'fromStarter'>[]): boolean {
+  return !mine.some((m) => !m.fromStarter);
+}
+
 /** A starter job's timing as a schedule, or null when the words don't parse. */
 export function parseStarterSchedule(schedule: string, hours: StarterHours): ReturnType<typeof parseWhen> {
   const s = schedule.trim().toLowerCase();

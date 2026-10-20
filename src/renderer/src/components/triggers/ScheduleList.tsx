@@ -14,7 +14,7 @@ import { formatTimes, normalizeTimes } from '@shared/scheduleTimes';
 import { WhenLines, fieldsFromLines, linesFromMission, sameLines, type LineDraft } from './WhenLines';
 import { cleanFocus, FOCUS_MAX, GOD_ALIAS, missionsFor, nextRunAt, ownerOf, OWNER, type ScheduledMission } from '@shared/missions';
 import { effectiveWorkStyle } from '@shared/michaelWorkStyle';
-import { suggestedStarterMissions } from '@shared/starterJobs';
+import { pickStarterPack, shouldShowStarters, suggestedStarterMissions } from '@shared/starterJobs';
 import { useRtl } from '@/i18n/useDirection';
 
 /**
@@ -535,9 +535,7 @@ function useStarterSuggestions(agentId: string, to: string, mine: ScheduledMissi
   const [suggestions, setSuggestions] = useState<ScheduledMission[]>([]);
 
   useEffect(() => {
-    // Hide suggestions once the owner adds a job of their own (not from a starter).
-    const hasNonStarterJob = mine.some((m) => !m.fromStarter);
-    if (hasNonStarterJob) {
+    if (!shouldShowStarters(mine)) {
       setSuggestions([]);
       return;
     }
@@ -545,25 +543,8 @@ function useStarterSuggestions(agentId: string, to: string, mine: ScheduledMissi
     Promise.all([window.cth.packsList(), window.cth.getConfig()]).then(([{ packs, core }, config]) => {
       if (!alive) return;
       const agent = agents.find((a) => a.id === agentId);
-      const allPacks = [...packs.map((p) => p.pack), core].filter(Boolean);
-      let targetPack = core ?? allPacks[0];
-      let defId = agentId;
-
-      if (agent?.sourceCard) {
-        const [type, id] = agent.sourceCard.split('/');
-        if (type && id) {
-          const match = allPacks.find((p) => p?.businessType === type);
-          if (match) {
-            targetPack = match;
-            defId = id;
-          }
-        }
-      } else {
-        // Original team member with no sourceCard: pick pack by office's businessType, fall back to core.
-        const officeType = config.businessType;
-        const match = officeType ? allPacks.find((p) => p?.businessType === officeType) : null;
-        targetPack = match ?? core ?? allPacks[0];
-      }
+      const allPacks = [...packs.map((p) => p.pack), core];
+      const { pack: targetPack, defId } = pickStarterPack(agent?.sourceCard, config.businessType, allPacks, core, agentId);
 
       if (!targetPack?.starterMissions?.length || !targetPack.officeHours) {
         setSuggestions([]);

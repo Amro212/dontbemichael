@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const loadTs = require('./load-ts.cjs');
 
-const { parseStarterSchedule, suggestedStarterMissions } = loadTs('src/shared/starterJobs.ts');
+const { parseStarterSchedule, suggestedStarterMissions, pickStarterPack, shouldShowStarters } = loadTs('src/shared/starterJobs.ts');
 const { validateOfficePack, mergeWithCore } = loadTs('src/shared/officePack.ts');
 
 const PACKS_DIR = path.resolve(__dirname, '..', 'resources', 'packs');
@@ -155,12 +155,19 @@ test('adding one of two starters still offers the other (PR #429 fix)', () => {
   );
   assert.equal(afterAddingOne.length, 1, 'adding one starter still offers the other');
   assert.equal(afterAddingOne[0].label, 'Follow up on leads');
+
+  // Verify visibility logic: starters should still show while all jobs are from starters
+  assert.equal(shouldShowStarters([]), true, 'show starters when agent has no jobs');
+  assert.equal(shouldShowStarters([{ fromStarter: true }]), true, 'show starters when all jobs are from starters');
+  assert.equal(shouldShowStarters([{ fromStarter: true }, { fromStarter: true }]), true, 'show starters when all jobs are from starters');
+  assert.equal(shouldShowStarters([{ fromStarter: false }]), false, 'hide starters when owner added a custom job');
+  assert.equal(shouldShowStarters([{ fromStarter: true }, { fromStarter: false }]), false, 'hide starters when any job is not from a starter');
 });
 
 // ─── PR #429 pack selection tests ─────────────────────────────────────────────
 
 test('original Pam in a retail office gets only retail starters (PR #429 fix)', () => {
-  // When the member has no sourceCard (original team), the pack should be selected
+  // When the member has no sourceCard (original team), pickStarterPack should select
   // by the office's businessType. Pam in retail-shop gets retail starters, not
   // home-services starters like "Tomorrow's jobs".
   const coreRaw = readPack('core.json');
@@ -172,19 +179,21 @@ test('original Pam in a retail office gets only retail starters (PR #429 fix)', 
   const homeServices = mergeWithCore(validateOfficePack(homeServicesRaw, 'bundled').pack, core);
 
   // Verify the packs have different starters for Pam
-  const retailPamStarters = retail.starterMissions.filter((m) => m.agentId === 'pam').map((m) => m.title);
   const homePamStarters = homeServices.starterMissions.filter((m) => m.agentId === 'pam').map((m) => m.title);
-
-  // Home services has "Tomorrow's jobs" which retail does not
   assert.ok(homePamStarters.includes("Tomorrow's jobs"), 'home-services pack has Tomorrow\'s jobs for pam');
-  assert.ok(!retailPamStarters.includes("Tomorrow's jobs"), 'retail-shop pack does NOT have Tomorrow\'s jobs for pam');
-  assert.ok(retailPamStarters.includes('Inbox to zero'), 'retail-shop pack has Inbox to zero for pam');
 
-  // Now verify suggestedStarterMissions returns correct starters from the retail pack
+  // Original Pam (no sourceCard) in a retail office: pickStarterPack selects by businessType
+  const allPacks = [retail, homeServices, core];
+  const { pack, defId } = pickStarterPack(undefined, 'retail-shop', allPacks, core, 'pam');
+
+  assert.equal(pack.businessType, 'retail-shop', 'pickStarterPack selects retail pack for retail businessType');
+  assert.equal(defId, 'pam', 'defId stays as the agent id when no sourceCard');
+
+  // Now get suggestions from the selected pack
   const suggestions = suggestedStarterMissions(
-    retail.starterMissions,
-    retail.officeHours,
-    'pam',
+    pack.starterMissions,
+    pack.officeHours,
+    defId,
     'pam-1',
     [],
     'god',
@@ -197,24 +206,28 @@ test('original Pam in a retail office gets only retail starters (PR #429 fix)', 
 });
 
 test('original Ryan in a restaurant gets Tomorrow\'s special (PR #429 fix)', () => {
-  // When the member has no sourceCard (original team), the pack should be selected
-  // by the office's businessType. Ryan in restaurant-food gets "Tomorrow's special",
-  // not pro-services starters like "Note to past clients".
+  // When the member has no sourceCard (original team), pickStarterPack should select
+  // by the office's businessType. Ryan in restaurant-food gets "Tomorrow's special".
   const coreRaw = readPack('core.json');
   const restaurantRaw = readPack('restaurant-food.json');
+  const proServicesRaw = readPack('pro-services.json');
 
   const core = validateOfficePack(coreRaw, 'bundled').pack;
   const restaurant = mergeWithCore(validateOfficePack(restaurantRaw, 'bundled').pack, core);
+  const proServices = mergeWithCore(validateOfficePack(proServicesRaw, 'bundled').pack, core);
 
-  // Verify restaurant pack has "Tomorrow's special" for Ryan
-  const restaurantRyanStarters = restaurant.starterMissions.filter((m) => m.agentId === 'ryan').map((m) => m.title);
-  assert.ok(restaurantRyanStarters.includes("Tomorrow's special"), 'restaurant pack has Tomorrow\'s special for ryan');
+  // Original Ryan (no sourceCard) in a restaurant office: pickStarterPack selects by businessType
+  const allPacks = [proServices, restaurant, core];
+  const { pack, defId } = pickStarterPack(undefined, 'restaurant-food', allPacks, core, 'ryan');
 
-  // Verify suggestedStarterMissions returns "Tomorrow's special" from the restaurant pack
+  assert.equal(pack.businessType, 'restaurant-food', 'pickStarterPack selects restaurant pack for restaurant businessType');
+  assert.equal(defId, 'ryan', 'defId stays as the agent id when no sourceCard');
+
+  // Now get suggestions from the selected pack
   const suggestions = suggestedStarterMissions(
-    restaurant.starterMissions,
-    restaurant.officeHours,
-    'ryan',
+    pack.starterMissions,
+    pack.officeHours,
+    defId,
     'ryan-1',
     [],
     'god',
@@ -223,4 +236,36 @@ test('original Ryan in a restaurant gets Tomorrow\'s special (PR #429 fix)', () 
 
   const labels = suggestions.map((s) => s.label);
   assert.ok(labels.includes("Tomorrow's special"), 'restaurant Ryan gets Tomorrow\'s special');
+});
+
+test('pickStarterPack uses sourceCard when present', () => {
+  const coreRaw = readPack('core.json');
+  const retailRaw = readPack('retail-shop.json');
+  const restaurantRaw = readPack('restaurant-food.json');
+
+  const core = validateOfficePack(coreRaw, 'bundled').pack;
+  const retail = mergeWithCore(validateOfficePack(retailRaw, 'bundled').pack, core);
+  const restaurant = mergeWithCore(validateOfficePack(restaurantRaw, 'bundled').pack, core);
+
+  // Agent hired from restaurant pack into a retail office: sourceCard wins over businessType
+  const allPacks = [retail, restaurant, core];
+  const { pack, defId } = pickStarterPack('restaurant-food/kelly', 'retail-shop', allPacks, core, 'kelly-1');
+
+  assert.equal(pack.businessType, 'restaurant-food', 'pickStarterPack uses sourceCard type over businessType');
+  assert.equal(defId, 'kelly', 'defId is the card id from sourceCard');
+});
+
+test('pickStarterPack falls back to core when businessType not found', () => {
+  const coreRaw = readPack('core.json');
+  const retailRaw = readPack('retail-shop.json');
+
+  const core = validateOfficePack(coreRaw, 'bundled').pack;
+  const retail = mergeWithCore(validateOfficePack(retailRaw, 'bundled').pack, core);
+
+  // Unknown businessType: falls back to core
+  const allPacks = [retail, core];
+  const { pack, defId } = pickStarterPack(undefined, 'unknown-type', allPacks, core, 'pam');
+
+  assert.equal(pack.businessType, 'core', 'pickStarterPack falls back to core for unknown businessType');
+  assert.equal(defId, 'pam');
 });
